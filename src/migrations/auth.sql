@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS user_devices (
     PRIMARY KEY (user_id, device_id)
 );
 
+CREATE TABLE IF NOT EXISTS captcha_challenges (
+    id UUID PRIMARY KEY,
+    answer_hash TEXT NOT NULL,
+    attempts INTEGER DEFAULT 0,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
 
 
