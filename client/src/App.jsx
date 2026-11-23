@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { encryptRequestBody } from "./encryption.js";
 import "./App.css";
 
 async function requestJson(path, options) {
@@ -28,11 +29,11 @@ function getJson(path) {
 }
 
 function postJson(path, payload) {
-    return requestJson(path, {
+    return encryptRequestBody(payload).then((encryptedPayload) => requestJson(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    });
+        body: JSON.stringify(encryptedPayload)
+    }));
 }
 
 function parseCaptcha(result) {
