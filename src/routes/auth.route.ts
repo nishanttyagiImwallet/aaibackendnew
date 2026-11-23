@@ -2,7 +2,8 @@ import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
 import { login, verifyOtp } from "../controllers/auth.controller.js";
 import { generateCaptcha } from "../controllers/captcha.controller.js";
-import {verifyCaptcha} from "../middleware/captcha.middleware.js";
+import { verifyCaptcha } from "../middleware/captcha.middleware.js";
+import { decryptRequest } from "../middleware/decryptRequest.middleware.js";
 
 
 const router = Router();
@@ -23,8 +24,8 @@ const loginLimiter = rateLimit({
     }
 });
 
-router.post("/login", loginLimiter,verifyCaptcha, login);
-router.post("/verify-otp", verifyOtp);
+router.post("/login", loginLimiter, decryptRequest, verifyCaptcha, login);
+router.post("/verify-otp", decryptRequest, verifyOtp);
 router.get("/captcha", generateCaptcha);
 
 export default router;

@@ -60,7 +60,7 @@ export async function login(req, res) {
             [rows[0].id, otpHash]
         );
 
-        // 6. Send response
+        // 6. Send response 
         return res.status(202).json({
             success: true,
             message: "OTP created successfully.",
