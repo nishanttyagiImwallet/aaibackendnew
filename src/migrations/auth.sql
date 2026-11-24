@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS user_devices (
     PRIMARY KEY (user_id, device_id)
 );
 
+-- Device binding: session ko device se bandhna.
+-- status: 'pending' = temp token (device check baaki), 'active' = final session
+ALTER TABLE auth_sessions
+    ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active',
+    ADD COLUMN IF NOT EXISTS device_id BIGINT REFERENCES device_info(id);
+
 CREATE TABLE IF NOT EXISTS captcha_challenges (
     id UUID PRIMARY KEY,
     answer_hash TEXT NOT NULL,

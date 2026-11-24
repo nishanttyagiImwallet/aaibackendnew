@@ -76,8 +76,6 @@ export async function login(req, res) {
         });
     }
 }
-
-
 export async function verifyOtp(req, res) {
     const email = typeof req.body?.email === "string"
         ? req.body.email.trim().toLowerCase()
@@ -169,9 +167,11 @@ export async function verifyOtp(req, res) {
         const accessToken = randomBytes(32).toString("base64url");
         const tokenHash = createHash("sha256").update(accessToken).digest("hex");
 
+        // Temp (pending) session: sirf device check/register ke liye, 5 minute.
+        // Final session device register hone ke baad banega.
         await client.query(
-            `INSERT INTO auth_sessions (id, user_id, token_hash, expires_at)
-             VALUES ($1, $2, $3, NOW() + INTERVAL '24 hours')`,
+            `INSERT INTO auth_sessions (id, user_id, token_hash, expires_at, status)
+             VALUES ($1, $2, $3, NOW() + INTERVAL '5 minutes', 'pending')`,
             [sessionId, user.id, tokenHash]
         );
         await client.query("COMMIT");
@@ -184,9 +184,10 @@ export async function verifyOtp(req, res) {
                 email: user.email
             },
             sessionId,
+            sessionStatus: "pending",
             accessToken,
             tokenType: "Bearer",
-            expiresIn: 86400
+            expiresIn: 300
         });
 
     } catch (error) {

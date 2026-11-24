@@ -1,0 +1,715 @@
+{
+  "info": {
+    "name": "AAI Device Binding",
+    "description": "Login (CAPTCHA + encrypted OTP) -> temp token -> device check -> device register -> final token.\nFolders ko upar se neeche (Collection Runner) chalao. Pehle variable 'email' set karo (users table mein hona chahiye).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5001"
+    },
+    {
+      "key": "email",
+      "value": ""
+    },
+    {
+      "key": "deviceUuid",
+      "value": ""
+    },
+    {
+      "key": "captchaId",
+      "value": ""
+    },
+    {
+      "key": "captchaAnswer",
+      "value": ""
+    },
+    {
+      "key": "otp",
+      "value": ""
+    },
+    {
+      "key": "tempToken",
+      "value": ""
+    },
+    {
+      "key": "finalToken",
+      "value": ""
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// 1. Device UUID: pehli baar apne aap ban jata hai (browser ke localStorage jaisa)",
+          "if (!pm.collectionVariables.get('deviceUuid')) {",
+          "    pm.collectionVariables.set('deviceUuid', pm.variables.replaceIn('{{$guid}}'));",
+          "}",
+          "",
+          "// 2. Agar request mein header \"X-Encrypt: true\" hai, toh body ko encrypt karo",
+          "//    (login aur verify-otp ki body encrypted hi leti hai)",
+          "if (pm.request.headers.has('X-Encrypt')) {",
+          "    pm.request.headers.remove('X-Encrypt');",
+          "",
+          "    const crypto = require('crypto');",
+          "    const plain = pm.variables.replaceIn(pm.request.body.raw);",
+          "",
+          "    pm.sendRequest(",
+          "        { url: pm.variables.get('baseUrl') + '/api/v1/encryption/public-key', method: 'GET' },",
+          "        (err, res) => {",
+          "            if (err || res.code !== 200) {",
+          "                throw new Error('Public key nahi mili. Backend chal raha hai? ' + (err || res.code));",
+          "            }",
+          "",
+          "            const key = res.json();",
+          "            const aesKey = crypto.randomBytes(32);   // har request ke liye nayi AES chaabi",
+          "            const iv = crypto.randomBytes(12);       // random IV",
+          "",
+          "            // Data ko AES-256-GCM se lock karo",
+          "            const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, iv);",
+          "            const encryptedData = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);",
+          "            const authTag = cipher.getAuthTag();",
+          "",
+          "            // AES chaabi ko server ke RSA public key se band karo",
+          "            const encryptedKey = crypto.publicEncrypt(",
+          "                {",
+          "                    key: key.publicKey,",
+          "                    padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,",
+          "                    oaepHash: 'sha256'",
+          "                },",
+          "                aesKey",
+          "            );",
+          "",
+          "            const envelope = {",
+          "                keyId: key.keyId,",
+          "                encryptedKey: encryptedKey.toString('base64'),",
+          "                encryptedData: encryptedData.toString('base64'),",
+          "                iv: iv.toString('base64'),",
+          "                authTag: authTag.toString('base64')",
+          "            };",
+          "",
+          "            pm.request.body.update({ mode: 'raw', raw: JSON.stringify(envelope) });",
+          "            console.log('[encrypt] body encrypted, keyId =', key.keyId);",
+          "        }",
+          "    );",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Login flow",
+      "item": [
+        {
+          "name": "0. Health check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": []
+            }
+          }
+        },
+        {
+          "name": "1. Get CAPTCHA",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('captchaId', j.captchaId);",
+                  "// Sawal \"a+b=?\" jaisa hota hai, jawab apne aap nikal lo",
+                  "const m = j.question.match(/(\\d+)\\s*\\+\\s*(\\d+)/);",
+                  "pm.collectionVariables.set('captchaAnswer', String(Number(m[1]) + Number(m[2])));",
+                  "console.log('CAPTCHA:', j.question, '-> answer', pm.collectionVariables.get('captchaAnswer'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/captcha",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "captcha"
+              ]
+            }
+          }
+        },
+        {
+          "name": "2. Get public key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('algorithm RSA-OAEP-256', () => pm.expect(j.algorithm).to.eql('RSA-OAEP-256'));",
+                  "pm.test('keyId aaya', () => pm.expect(j.keyId).to.be.a('string').and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/encryption/public-key",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "encryption",
+                "public-key"
+              ]
+            }
+          }
+        },
+        {
+          "name": "3. Login (encrypted body) -> OTP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 OTP bana', () => pm.response.to.have.status(202));",
+                  "const j = pm.response.json();",
+                  "// Dev mein devOtp aata hai. Na aaye toh email users table mein nahi hai.",
+                  "pm.test('devOtp aaya (email users table mein hona chahiye)', () => pm.expect(j.devOtp).to.be.a('string'));",
+                  "if (j.devOtp) pm.collectionVariables.set('otp', j.devOtp);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Encrypt",
+                "value": "true",
+                "description": "Sirf script ke liye. Server ko nahi jata."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"captchaId\": \"{{captchaId}}\",\n  \"captchaAnswer\": \"{{captchaAnswer}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            }
+          }
+        },
+        {
+          "name": "4. Verify OTP (encrypted body) -> temp token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('temp token: sessionStatus = pending', () => pm.expect(j.sessionStatus).to.eql('pending'));",
+                  "pm.test('expiresIn 300 (5 min)', () => pm.expect(j.expiresIn).to.eql(300));",
+                  "pm.collectionVariables.set('tempToken', j.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Encrypt",
+                "value": "true",
+                "description": "Sirf script ke liye. Server ko nahi jata."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"otp\": \"{{otp}}\",\n  \"device_uuid\": \"{{deviceUuid}}\",\n  \"device_info\": {\n    \"device_name\": \"Postman\",\n    \"device_type\": \"web\",\n    \"os_name\": \"macOS\",\n    \"os_version\": \"\",\n    \"app_version\": \"1.0.0\",\n    \"screen_resolution\": \"1440x900\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/verify-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "verify-otp"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Device binding",
+      "item": [
+        {
+          "name": "5. Device check (temp token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('status valid hai', () => pm.expect(['NEW_DEVICE', 'NEW_USER_ON_REGISTERED_DEVICE', 'REGISTERED']).to.include(j.status));",
+                  "console.log('check status:', j.status);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tempToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_uuid\": \"{{deviceUuid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/device/check",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "device",
+                "check"
+              ]
+            }
+          }
+        },
+        {
+          "name": "6. Device register (temp token) -> final token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('session active ho gayi', () => pm.expect(j.sessionStatus).to.eql('active'));",
+                  "pm.test('final token 24 ghante', () => pm.expect(j.expiresIn).to.eql(86400));",
+                  "pm.test('deviceStatus aaya', () => pm.expect(['NEW_DEVICE', 'NEW_USER_ON_REGISTERED_DEVICE', 'REGISTERED']).to.include(j.deviceStatus));",
+                  "console.log('register status:', j.deviceStatus);",
+                  "pm.collectionVariables.set('finalToken', j.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tempToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_uuid\": \"{{deviceUuid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/device/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "device",
+                "register"
+              ]
+            }
+          }
+        },
+        {
+          "name": "7. Device check (final token) -> REGISTERED",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('ab REGISTERED hona chahiye', () => pm.expect(pm.response.json().status).to.eql('REGISTERED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{finalToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_uuid\": \"{{deviceUuid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/device/check",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "device",
+                "check"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Negative tests",
+      "item": [
+        {
+          "name": "8. Register dobara (active session) -> 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Session already active', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{finalToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_uuid\": \"{{deviceUuid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/device/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "device",
+                "register"
+              ]
+            }
+          }
+        },
+        {
+          "name": "9. Purana temp token ab bekaar -> 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 (register ke baad temp token ka hash badal gaya)', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tempToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_uuid\": \"{{deviceUuid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/device/check",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "device",
+                "check"
+              ]
+            }
+          }
+        },
+        {
+          "name": "10. Bina token ke device check -> 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Bearer token is required', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_uuid\": \"{{deviceUuid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/device/check",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "device",
+                "check"
+              ]
+            }
+          }
+        },
+        {
+          "name": "11. Galat device_uuid -> 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Valid device_uuid is required', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{finalToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_uuid\": \"not-a-uuid\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/device/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "device",
+                "register"
+              ]
+            }
+          }
+        },
+        {
+          "name": "12. Galat token -> 401",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.request.headers.add({ key: 'Authorization', value: 'Bearer ' + ['not', 'a', 'real', 'value'].join('-') });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Invalid or expired token', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_uuid\": \"{{deviceUuid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/device/check",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "device",
+                "check"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
