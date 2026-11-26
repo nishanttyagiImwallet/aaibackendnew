@@ -46,6 +46,31 @@ ALTER TABLE auth_sessions
     ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active',
     ADD COLUMN IF NOT EXISTS device_id BIGINT REFERENCES device_info(id);
 
+-- Session ke saath login ki IP aur (optional) location. Sirf record ke liye, authorization ke liye nahi.
+ALTER TABLE auth_sessions
+    ADD COLUMN IF NOT EXISTS ip_address INET,
+    ADD COLUMN IF NOT EXISTS latitude NUMERIC(9,6),
+    ADD COLUMN IF NOT EXISTS longitude NUMERIC(9,6);
+
+-- Device binding v2: device ki public key (refresh par nonce + signature se verify hoti hai)
+ALTER TABLE device_info ADD COLUMN IF NOT EXISTS public_key TEXT;
+
+-- Nonce: ek baar ka random number (sirf hash save hota hai)
+CREATE TABLE IF NOT EXISTS device_nonces (
+    nonce_hash CHAR(64) PRIMARY KEY,
+    device_uuid UUID NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ
+);
+
+-- Device token: chhoti umar (30 min) ka token, public APIs ke liye (sirf hash save hota hai)
+CREATE TABLE IF NOT EXISTS device_tokens (
+    token_hash CHAR(64) PRIMARY KEY,
+    device_id BIGINT NOT NULL REFERENCES device_info(id),
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS captcha_challenges (
     id UUID PRIMARY KEY,
     answer_hash TEXT NOT NULL,

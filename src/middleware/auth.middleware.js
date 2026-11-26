@@ -16,7 +16,7 @@ function authenticate(allowedStatuses) {
         try {
             const tokenHash = createHash("sha256").update(token).digest("hex");
             const { rows } = await db.query(
-                `SELECT s.id, s.user_id, s.status
+                `SELECT s.id, s.user_id, s.status, s.device_id
                  FROM auth_sessions s
                  JOIN users u ON u.id = s.user_id
                  WHERE s.token_hash = $1
@@ -31,7 +31,13 @@ function authenticate(allowedStatuses) {
                 return res.status(401).json({ success: false, message: "Invalid or expired token." });
             }
 
-            req.user = { id: rows[0].user_id, sessionId: rows[0].id, sessionStatus: rows[0].status };
+            // deviceId: ye session kis device se bandha hai (pending session mein khaali hota hai)
+            req.user = {
+                id: rows[0].user_id,
+                sessionId: rows[0].id,
+                sessionStatus: rows[0].status,
+                deviceId: rows[0].device_id,
+            };
             return next();
         } catch (error) {
             console.error("Authentication failed:", error.message);

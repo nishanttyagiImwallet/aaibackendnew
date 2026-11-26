@@ -1,15 +1,16 @@
 import { createHash, randomBytes } from "node:crypto";
-import db from "../config/db.js";
+import db from "../config/db.js"; 
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
+// input  req = uuid;
+// output res = device_id;
 export async function checkDevice(req, res) {
     const deviceUuid = req.body?.device_uuid;
 
     if (typeof deviceUuid !== "string" || !uuidPattern.test(deviceUuid)) {
         return res.status(400).json({ success: false, message: "Valid device_uuid is required." });
     }
-
+// device ka status get karna do table kis madad se bhai device_info and user_devices.
     try {
         const { rows } = await db.query(
             `SELECT d.id, d.status AS device_status, ud.status AS association_status
@@ -19,16 +20,19 @@ export async function checkDevice(req, res) {
             [req.user.id, deviceUuid],
         );
         const device = rows[0];
-
+// device hi nahi mili
         if (!device) {
             return res.status(200).json({ success: true, status: "NEW_DEVICE" });
         }
+// device table mai devicee blocked hai.
         if (device.device_status !== "active") {
             return res.status(403).json({ success: false, status: "DEVICE_BLOCKED" });
         }
+// new association on thee new device with user here bhai.
         if (device.association_status === null) {
             return res.status(200).json({ success: true, status: "NEW_USER_ON_REGISTERED_DEVICE" });
         }
+// new association block hai bhai yaha par. 
         if (device.association_status !== "active") {
             return res.status(403).json({ success: false, status: "ASSOCIATION_BLOCKED" });
         }
@@ -39,17 +43,21 @@ export async function checkDevice(req, res) {
         return res.status(500).json({ success: false, message: "Could not check device." });
     }
 };
-
+// input = device_uuid. 
 // Device register karo, phir pending (temp) session ko final (active) session banao.
 // Token: pending session ka hona chahiye (requireDeviceAuth ye check kar chuka hai).
+// input = device uuid
+
+ 
 export async function registerDevice(req, res) {
     const deviceUuid = req.body?.device_uuid;
+
 
     if (typeof deviceUuid !== "string" || !uuidPattern.test(deviceUuid)) {
         return res.status(400).json({ success: false, message: "Valid device_uuid is required." });
     }
 
-    // Sirf temp (pending) session hi complete ho sakta hai
+    // Sirf temp (pending) session hi complete ho sakta hai session status 
     if (req.user.sessionStatus !== "pending") {
         return res.status(409).json({ success: false, message: "Session is already active." });
     }
@@ -61,6 +69,9 @@ export async function registerDevice(req, res) {
         await client.query("BEGIN");
 
         // 1. Device ko save karo (pehle se ho toh wahi row wapas aayegi)
+        //  if the device is registered then 
+        // it is id =1status=active,new = false, edit the device_id which will be same .
+        // id the device is not register the  registro this here 
         const device = await client.query(
             `INSERT INTO device_info (device_uuid)
              VALUES ($1)
@@ -76,6 +87,9 @@ export async function registerDevice(req, res) {
         }
 
         // 2. User aur device ko jodo
+
+        // input= user_id,device_id,
+        // output status in the table and is_new ehre.
         const link = await client.query(
             `INSERT INTO user_devices (user_id, device_id)
              VALUES ($1, $2)
@@ -89,7 +103,7 @@ export async function registerDevice(req, res) {
             await client.query("ROLLBACK");
             return res.status(403).json({ success: false, status: "ASSOCIATION_BLOCKED" });
         }
-
+// device wheather is tth new device ,NEW_USER_ON_REGISTERED_DEVICE,register.
         const deviceStatus = device.rows[0].is_new
             ? "NEW_DEVICE"
             : link.rows[0].is_new ? "NEW_USER_ON_REGISTERED_DEVICE" : "REGISTERED";
